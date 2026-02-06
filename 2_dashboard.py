@@ -1,15 +1,16 @@
-# 檔案名稱：2_dashboard.py
+# 檔案名稱：2_dashboard.py (全台版圖分析版)
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from collections import Counter
+import re
 
 st.set_page_config(page_title="全台招生 SEO 戰情室", layout="wide")
 
-# 讀取數據
 try:
     df = pd.read_csv('school_data.csv')
 except FileNotFoundError:
-    st.error("❌ 找不到數據，請先執行 `1_generate_data_real.py`")
+    st.error("❌ 找不到數據，請先執行 `powergeo.py`")
     st.stop()
 
 # --- 側邊欄 ---
@@ -22,6 +23,35 @@ if selected_college == "全部學院":
 else:
     dept_options = ["學院總覽"] + list(df[df['College'] == selected_college]['Department'].unique())
 selected_dept = st.sidebar.selectbox("STEP 2: 選擇科系/視角", dept_options)
+
+# ==========================================
+# 輔助函數：提取標題中的學校名稱
+# ==========================================
+def extract_schools_from_titles(titles):
+    # 定義要偵測的學校關鍵字 (包含簡稱)
+    school_keywords = [
+        "華醫", "中華醫事", "嘉藥", "嘉南", "輔英", "弘光", "元培", "中臺", "慈濟", 
+        "長庚", "北護", "國北護", "中山醫", "中國醫", "高醫", "樹人", "美和", 
+        "亞大", "亞洲大學", "大仁", "高餐", "台南應用", "Dcard", "PTT", "104", "1111"
+    ]
+    detected = []
+    for title in titles:
+        if pd.isna(title): continue
+        found = False
+        for sk in school_keywords:
+            if sk in title:
+                # 統一名稱
+                name = sk
+                if name in ["華醫", "中華醫事"]: name = "中華醫事 (本校)"
+                elif name in ["嘉藥", "嘉南"]: name = "嘉南藥理"
+                elif name in ["北護", "國北護"]: name = "國北護"
+                elif name in ["亞大", "亞洲大學"]: name = "亞洲大學"
+                detected.append(name)
+                found = True
+                break # 一個標題只算一次主要學校
+        if not found:
+            detected.append("其他/一般資訊")
+    return detected
 
 # --- 主畫面 ---
 if "總覽" in selected_dept:
@@ -36,6 +66,16 @@ if "總覽" in selected_dept:
     with col2:
         fig2 = px.pie(target_df, names='Keyword_Type', title="搜尋意圖分佈")
         st.plotly_chart(fig2, use_container_width=True)
+    
+    # 全國版圖分析 (總覽頁)
+    st.divider()
+    st.subheader("🗺️ 全國版圖：誰佔據了搜尋結果 Top 1？")
+    all_top1_titles = target_df['Rank1_Title'].tolist()
+    school_counts = Counter(extract_schools_from_titles(all_top1_titles))
+    top_schools_df = pd.DataFrame(school_counts.items(), columns=['單位', '佔據首位次數']).sort_values('佔據首位次數', ascending=False)
+    
+    st.bar_chart(top_schools_df.set_index('單位'))
+    st.caption("此圖表顯示在所有關鍵字搜尋中，各大學（或平台）出現在「第一名」的次數。這能反映真實的市場佔有率。")
 
 else:
     # === 單一科系戰情室 ===
@@ -43,88 +83,61 @@ else:
     dept_df = df[df['Department'] == selected_dept].sort_values('AI_Potential', ascending=False)
     
     # 1. 關鍵字選擇
-    st.subheader("🕵️ 選擇關鍵字，查看真實搜尋結果")
-    
-    # 製作選單標籤
+    st.subheader("🕵️ 選擇關鍵字，查看 Top 3 搜尋結果")
     dept_df['Display_Label'] = dept_df['Keyword'] + " [" + dept_df['Keyword_Type'] + "]"
     target_label = st.selectbox("請選擇關鍵字", dept_df['Display_Label'].unique())
-    
-    # 取得選定資料
     target_row = dept_df[dept_df['Display_Label'] == target_label].iloc[0]
     
-    # --- 核心功能：SERP 快照展示卡 ---
     st.divider()
     
     col_l, col_r = st.columns([1, 2])
-    
     with col_l:
         st.metric("每月搜尋量", f"{target_row['Search_Volume']}")
-        st.caption(f"搜尋意圖：{target_row['Keyword_Type']}")
+        st.info(f"💡 策略：{target_row['Strategy_Tag']}")
         
-        # 威脅度判斷
-        top_title = str(target_row['Top_Title'])
-        threat_level = "🟢 安全"
-        if "Dcard" in top_title or "PTT" in top_title or "靠北" in top_title:
-            threat_level = "🔴 危險 (社群負評風險)"
-        elif "中華醫事" not in top_title and "華醫" not in top_title:
-            threat_level = "🟡 警戒 (被對手或媒體佔據)"
+        top1 = str(target_row['Rank1_Title'])
+        if "Dcard" in top1 or "PTT" in top1:
+            st.error("🔴 首位威脅：社群輿論")
+        elif "中華醫事" in top1 or "華醫" in top1:
+            st.success("🟢 首位威脅：本校 (安全)")
         else:
-            threat_level = "🟢 優秀 (本校佔據首位)"
-            
-        st.metric("首位威脅度", threat_level)
+            st.warning("🟡 首位威脅：競爭對手/媒體")
 
     with col_r:
-        st.subheader("👀 目前的第一名搜尋結果 (Snapshot)")
-        container = st.container(border=True)
-        # 處理連結
-        link = target_row['Top_Link'] if str(target_row['Top_Link']).startswith("http") else "#"
-        container.markdown(f"#### [{target_row['Top_Title']}]({link})")
-        container.markdown(f"_{target_row['Top_Snippet']}_")
-        container.caption(f"來源: {link}")
-        
-        if "危險" in threat_level:
-            st.error("🚨 建議：請撰寫一篇「官方澄清」或「學生真實心得」文章來平衡視聽。")
-        elif "警戒" in threat_level:
-            st.warning("⚠️ 建議：使用下方的 AI 提示詞生成文章，奪回排名！")
+        st.markdown(f"### 👀 「{target_row['Keyword']}」搜尋結果快照")
+        for i in range(1, 4):
+            t = target_row[f'Rank{i}_Title']
+            l = target_row[f'Rank{i}_Link']
+            s = target_row[f'Rank{i}_Snippet']
+            if t != "無":
+                with st.container(border=True):
+                    st.markdown(f"**#{i} [{t}]({l})**")
+                    st.caption(s[:100] + "..." if len(s)>100 else s)
 
     st.divider()
     
-    # --- 2. AI 提示詞生成 ---
-    st.subheader("🛠️ AI 文案提示詞產生器 (GEO 優化版)")
+    # 2. 全台競爭者分析圖表 (科系層級)
+    st.subheader(f"⚔️ {selected_dept} 的主要競爭對手分析")
+    st.write("統計本系所有關鍵字的前三名搜尋結果，找出最常出現的對手：")
     
-    # Prompt 邏輯
-    kw = target_row['Keyword']
-    strategy = target_row['Strategy_Tag']
+    # 收集前三名的所有標題
+    all_titles = dept_df['Rank1_Title'].tolist() + dept_df['Rank2_Title'].tolist() + dept_df['Rank3_Title'].tolist()
+    dept_school_counts = Counter(extract_schools_from_titles(all_titles))
     
-    # 預設值
-    prompt_focus = "科系特色與優勢"
-    table_content = "科系重點懶人包"
+    # 轉成圖表數據
+    chart_data = pd.DataFrame(dept_school_counts.items(), columns=['競爭對手/平台', '出現頻率']).sort_values('出現頻率', ascending=False)
+    # 過濾掉「其他」以免干擾視覺
+    chart_data = chart_data[chart_data['競爭對手/平台'] != '其他/一般資訊']
     
-    if "vs" in kw or "比較" in kw:
-        prompt_focus = "本校與他校的實作資源、證照輔導差異 (強調我方優勢)"
-        table_content = "本校 vs 他校 優勢對照表"
-    elif "薪水" in kw or "出路" in kw:
-        prompt_focus = "畢業後的具體薪資範圍與職涯地圖"
-        table_content = "薪資行情與對應職缺表"
-    elif "Dcard" in kw or "評價" in kw:
-        prompt_focus = "釐清網路上的迷思，展現真實且溫暖的校園生活"
-        table_content = "常見誤解 vs 真實情況 Q&A"
+    st.bar_chart(chart_data.set_index('競爭對手/平台'), color="#FF6C6C")
+    st.caption("數據解讀：如果「嘉南藥理」的柱狀圖很高，代表學生搜尋本系相關關鍵字時，很容易看到嘉藥的網頁。")
 
-    generated_prompt = f"""
-    【角色設定】：你是一位專業的大學教育顧問與 SEO 專家。
-    【任務】：請為「{selected_dept}」針對關鍵字「{kw}」撰寫一篇高權重文章。
-    
-    【GEO 結構要求 (讓 AI 優先引用)】：
-    1. 📍 直接回答：文章第一段請直接針對「{kw}」給出核心觀點。
-    2. 📊 結構化表格：請製作 Markdown 表格，內容為「{table_content}」。
-    3. 🎓 核心亮點：文中請多次強調「{prompt_focus}」。
-    4. ❓ FAQ：文末請列出 3 個相關常見問題。
+    # 3. 總表
+    st.subheader("📋 關鍵字詳細數據總表")
+    st.dataframe(dept_df[['Keyword', 'Search_Volume', 'Keyword_Type', 'Rank1_Title']], use_container_width=True)
 
-    【撰寫策略】：{strategy}
-    【字數】：約 800 字。
-    """
-    
-    # 使用 height=500 確保文字框夠高
-    st.text_area("📋 給 ChatGPT / Gemini 的指令 (請複製)：", generated_prompt, height=500)
-    
-    st.success(f"💡 策略提示：**{strategy}**")
+    # 4. AI 生成
+    with st.expander("🛠️ 開啟 AI 文案生成器"):
+        kw = target_row['Keyword']
+        prompt = f"請為{selected_dept}撰寫關於「{kw}」的SEO文章。策略：{target_row['Strategy_Tag']}。需包含表格與FAQ。"
+        st.text_area("Prompt:", prompt, height=200)
