@@ -1,200 +1,175 @@
-# 檔案名稱：2_dashboard.py (終極抗壓版：Gemini 2.0 + 自動重試 + 快取)
+# 檔案名稱：2_dashboard.py
+# 功能：全台招生 SEO/GEO 戰情室 (搭配全台雷達數據)
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import requests
-import json
-import google.generativeai as genai
-import time  # 引入時間模組，用來處理等待
 
 # ==========================================
-# 🔑 設定區 (請在此填入您的 API Key)
+# 1. 頁面設定與資料讀取
 # ==========================================
-SERPER_API_KEY = "6dcb4225919e50e501bbddfab3411337b99c0547"       # 用來查真實排名
-GEMINI_API_KEY = "AIzaSyBw3XcuicFgLHVsvG0LTl41CackAn6JUFA"       # 用來寫文章
-# ==========================================
+st.set_page_config(
+    page_title="全台招生 SEO/GEO 戰情室", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# 設定 AI (如果有填 Key 才設定)
-if "你的" not in GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-
-st.set_page_config(page_title="學校招生 SEO 戰情室", layout="wide")
-
-# 讀取數據
+# 讀取數據 (自動偵測編碼，防止亂碼)
 try:
     df = pd.read_csv('school_data.csv')
 except FileNotFoundError:
-    st.error("錯誤：找不到 school_data.csv，請確認 GitHub 檔案是否上傳成功。")
+    st.error("❌ 錯誤：找不到 `school_data.csv`。請先執行 `1_generate_data_real.py` 來生成全台數據。")
     st.stop()
 
-# --- 側邊欄 ---
-st.sidebar.title("🏫 招生策略控制台")
-st.sidebar.caption("核心：Gemini 2.0 Flash + 智慧快取")
-dept_list = ["全校總覽"] + list(df['Department'].unique())
-selected_dept = st.sidebar.selectbox("選擇分析視角", dept_list)
+# ==========================================
+# 2. 側邊欄：導航與篩選
+# ==========================================
+st.sidebar.title("🏫 全台招生戰情室")
+st.sidebar.caption("核心技術：GEO 生成式引擎優化")
 
-# --- 函數 1: Serper 真實搜尋 (加入快取，省錢！) ---
-# ttl=3600 代表搜尋結果會記憶 1 小時，這期間重複查同一個字不會扣額度
-@st.cache_data(ttl=3600)
-def get_google_results(keyword):
-    """透過 Serper API 取得真實 Google 排名"""
-    url = "https://google.serper.dev/search"
-    payload = json.dumps({"q": keyword, "gl": "tw", "hl": "zh-tw", "num": 3})
-    headers = {'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json'}
-    try:
-        response = requests.post(url, headers=headers, data=payload)
-        data = response.json()
-        if "organic" in data:
-            return data["organic"], "🟢 Google 真實數據"
-        else:
-            return [], "⚠️ 查無資料 (可能關鍵字太冷門)"
-    except Exception as e:
-        return [], f"連線錯誤: {str(e)}"
+# 學院篩選 (讓清單不要太長)
+college_list = ["全部學院"] + list(df['College'].unique())
+selected_college = st.sidebar.selectbox("STEP 1: 選擇學院", college_list)
 
-# --- 函數 2: Gemini AI 寫文章 (加入自動重試機制，抗 429 錯誤) ---
-# show_spinner=False 避免快取讀取時畫面閃爍
-@st.cache_data(show_spinner=False)
-def generate_ai_article(keyword, department):
-    """呼叫 Gemini 2.0 Flash 撰寫招生文案"""
-    
-    # 提示詞工程 (Prompt Engineering)
-    prompt = f"""
-    你是一位資深的大學招生行銷專家。
-    目標對象：台灣的高中生 (17-18歲) 及其家長。
-    請針對關鍵字「{keyword}」，為「{department}」撰寫一篇部落格文章草稿。
-    
-    文章結構要求：
-    1. **吸睛標題**：要包含關鍵字。
-    2. **前言 (Hook)**：從高中生的煩惱切入。
-    3. **核心價值**：介紹這領域的優勢（如薪資、未來趨勢），並帶入本系特色。
-    4. **常見問答 (FAQ)**：列出 3 個學生常問的問題並回答。
-    5. **行動呼籲 (CTA)**：鼓勵瀏覽官網。
-    
-    語氣：親切、專業。字數：約 600 字。
-    """
-    
-    # --- 自動重試邏輯 (Auto-Retry) ---
-    max_retries = 3  # 最多嘗試 3 次
-    
-    for attempt in range(max_retries):
-        try:
-            # 使用最新的 2.0 Flash 模型
-            model = genai.GenerativeModel('gemini-2.0-flash')
-            response = model.generate_content(prompt)
-            return response.text
-            
-        except Exception as e:
-            error_msg = str(e)
-            
-            # 如果遇到 429 (Resource exhausted / Too Many Requests)
-            if "429" in error_msg or "Resource exhausted" in error_msg:
-                if attempt < max_retries - 1:
-                    # 計算等待時間：第1次等5秒，第2次等10秒
-                    wait_time = (attempt + 1) * 5
-                    time.sleep(wait_time)
-                    continue  # 再試一次
-                else:
-                    return "⏳ 系統目前太忙碌 (Google 限制請求速度)，請休息 1 分鐘後再試。"
-            
-            # 其他錯誤直接回傳
-            return f"❌ AI 生成失敗: {error_msg}"
-
-# --- 主畫面邏輯 ---
-
-if selected_dept == "全校總覽":
-    st.title("📊 全校科系網路聲量總覽")
-    total = df['Search_Volume'].sum()
-    top = df.groupby('Department')['Search_Volume'].sum().idxmax()
-    
-    col1, col2 = st.columns(2)
-    col1.metric("全校總潛在搜尋流量", f"{total:,}")
-    col2.metric("網路聲量冠軍", top)
-    st.markdown("---")
-    
-    dept_traffic = df.groupby('Department')['Search_Volume'].sum().reset_index().sort_values('Search_Volume', ascending=False)
-    fig_bar = px.bar(dept_traffic, x='Department', y='Search_Volume', color='Department')
-    st.plotly_chart(fig_bar, width="stretch")
-
+# 科系篩選 (根據學院連動)
+if selected_college == "全部學院":
+    dept_options = ["全校總覽"] + list(df['Department'].unique())
 else:
-    # === 單一科系視角 ===
-    st.title(f"🔍 {selected_dept}：招生關鍵字分析")
+    dept_options = ["學院總覽"] + list(df[df['College'] == selected_college]['Department'].unique())
+
+selected_dept = st.sidebar.selectbox("STEP 2: 選擇科系/視角", dept_options)
+
+st.sidebar.divider()
+st.sidebar.info("""
+**💡 什麼是 GEO？**
+GEO (Generative Engine Optimization) 是讓您的網站內容更容易被 AI (ChatGPT, Gemini) 搜尋、理解並引用的技術。
+""")
+
+# ==========================================
+# 3. 主畫面邏輯
+# ==========================================
+
+# --- A. 總覽模式 (全校或學院) ---
+if "總覽" in selected_dept:
+    st.title(f"📊 {selected_college if selected_college != '全部學院' else '全校'}：網路聲量戰略地圖")
+    
+    # 過濾資料
+    target_df = df if selected_college == "全部學院" else df[df['College'] == selected_college]
+    
+    # 關鍵指標
+    total_vol = target_df['Search_Volume'].sum()
+    top_kw = target_df.sort_values('Search_Volume', ascending=False).iloc[0]
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric("總潛在搜尋流量", f"{total_vol:,}")
+    col2.metric("流量冠軍關鍵字", top_kw['Keyword'])
+    col3.metric("最高競爭對手", "全台醫護/民生類院校")
+    
+    st.divider()
+    
+    # 圖表 1: 各系聲量排行
+    st.subheader("🏆 各系網路聲量佔比")
+    dept_traffic = target_df.groupby('Department')['Search_Volume'].sum().reset_index().sort_values('Search_Volume', ascending=False)
+    fig_bar = px.bar(dept_traffic, x='Department', y='Search_Volume', color='Department', text_auto='.2s')
+    st.plotly_chart(fig_bar, use_container_width=True)
+    
+    # 圖表 2: 關鍵字意圖分佈
+    st.subheader("🧠 學生都在問什麼？(搜尋意圖分析)")
+    intent_dist = target_df['Keyword_Type'].value_counts().reset_index()
+    intent_dist.columns = ['搜尋意圖', '數量']
+    fig_pie = px.pie(intent_dist, values='數量', names='搜尋意圖', hole=0.4)
+    st.plotly_chart(fig_pie, use_container_width=True)
+
+# --- B. 單一科系戰情室 (核心功能) ---
+else:
+    st.title(f"🔍 {selected_dept}：GEO 策略指揮中心")
+    
+    # 取得該系資料
     dept_df = df[df['Department'] == selected_dept]
     
-    if dept_df.empty:
-        st.warning("⚠️ 此科系無數據。")
-        st.stop()
-
-    best_keyword = dept_df.sort_values('Opportunity_Score', ascending=False).iloc[0]
+    # 找出「全台比拼」類型的關鍵字 (這是這次更新的重點)
+    nationwide_kws = dept_df[dept_df['Keyword_Type'].isin(['全台比拼', '差異化'])]
     
-    col1, col2 = st.columns(2)
-    col1.metric("🔥 必寫文章主題", best_keyword['Keyword'])
-    col2.metric("平均月搜尋量", f"{int(dept_df['Search_Volume'].mean()):,}")
+    # 頂部提示
+    if not nationwide_kws.empty:
+        st.warning(f"⚡ 偵測到 {len(nationwide_kws)} 個全台級競爭關鍵字！學生正在將本系與外縣市學校進行比較。")
+
+    # --- 1. 關鍵字選擇區 ---
+    st.subheader("🛠️ GEO 文案提示詞產生器")
+    st.info("👇 選擇一個關鍵字，系統將生成「符合良性差異化」的 AI 寫作指令。")
+    
+    # 排序：讓高價值的字排前面
+    sorted_kws = dept_df.sort_values('AI_Potential', ascending=False)['Keyword'].unique()
+    target_kw = st.selectbox("請選擇您想進攻的關鍵字", sorted_kws)
+    
+    # --- 2. Prompt 生成邏輯 (全台差異化版) ---
+    # 預設值 (防止 NameError)
+    prompt_type = "基礎推廣"
+    focus_point = "科系核心價值與校園環境"
+    table_content = "科系特色重點整理 (懶人包)"
+    tone_instruction = "親切、熱情、展現自信"
+    
+    kw_str = str(target_kw)
+    
+    # 邏輯 A: 全台/跨校比較 (轉化為差異化優勢)
+    if any(x in kw_str for x in ['vs', '比較', '排名', '嘉藥', '輔英', '弘光', '元培', '中國醫']):
+        prompt_type = "全台差異化分析 (USP)"
+        focus_point = "本校在「實作資源、證照輔導、地理位置」上的獨特優勢 (Unique Selling Point)"
+        table_content = "本校特色優勢 vs 全台同類科系之差異對照表 (強調我方強項)"
+        tone_instruction = "客觀大器、不惡意攻擊、強調「適性揚才」(適合喜歡實作/就業的學生)"
+        
+    # 邏輯 B: 數據權威 (薪資/榜單)
+    elif any(x in kw_str for x in ['薪水', '薪資', '榜單', '及格率', '錄取', '分數']):
+        prompt_type = "數據權威建立"
+        focus_point = "具體的國考及格率數據、畢業起薪範圍、傑出校友表現"
+        table_content = "本校歷年考照/就業數據一覽表"
+        tone_instruction = "專業、數據導向、建立信賴感"
+        
+    # 邏輯 C: 資訊服務 (出路/實習)
+    elif any(x in kw_str for x in ['出路', '實習', '證照', '宿舍', '交通']):
+        prompt_type = "資訊透明化服務"
+        focus_point = "完整的課程地圖、實習合作醫院清單、生活機能介紹"
+        table_content = "畢業出路與對應證照/職缺關聯表"
+        tone_instruction = "清晰易懂、像學長姐般的貼心指引"
+        
+    # 邏輯 D: 社群關懷 (評價/Dcard)
+    elif any(x in kw_str for x in ['評價', '好嗎', '後悔', '很累', 'Dcard']):
+        prompt_type = "暖心職涯輔導"
+        focus_point = "釐清學生對該行業的辛苦迷思、強調系上的支持系統與成就感"
+        table_content = "常見迷思 vs 真實職場樣貌 (釐清誤解)"
+        tone_instruction = "同理心、溫暖、誠懇溝通"
+
+    # 生成 Prompt
+    generated_prompt = f"""
+    【角色設定】：你是一位專業的大學教育顧問與 SEO 專家。
+    【任務】：請為「{selected_dept}」針對關鍵字「{target_kw}」撰寫一篇高權重文章。
+    
+    【核心策略：{prompt_type}】：
+    1. 寫作語氣：{tone_instruction}。
+    2. 若涉及他校比較，請避免攻擊，而是專注於闡述本校的「獨特價值」，幫助學生找到最適合的環境。
+    
+    【GEO 結構要求 (讓 AI 優先引用)】：
+    1. 📍 直接回答 (Direct Answer)：文章第一段請直接針對「{target_kw}」給出核心觀點或定義。
+    2. 📊 結構化表格：請務必製作一個 Markdown 表格，內容為「{table_content}」。
+    3. 🎓 核心亮點：文中請多次強調「{focus_point}」。
+    4. ❓ FAQ：文末請列出 3 個相關常見問題 (Q&A)。
+
+    【字數】：約 800-1000 字。
+    """
+    
+    # 顯示 Prompt
+    st.text_area("📋 給 ChatGPT / Gemini 的指令 (請複製)：", generated_prompt, height=350)
+    st.success(f"💡 策略提示：這是一個 **【{prompt_type}】** 類型的關鍵字。我們已指示 AI 製作 **「{table_content}」**，這能大幅增加被搜尋引擎收錄的機會！")
     
     st.divider()
-
-    # --- 核心功能區 ---
-    st.subheader("🕵️ 競爭對手偵查 & ✨ AI 文案生成")
     
-    # 1. 選單
-    target_kw = st.selectbox(
-        "👇 第一步：請選擇您想進攻的關鍵字", 
-        dept_df['Keyword'].unique()
-    )
-
-    st.write("") # 留白
-
-    # 2. 按鈕 (使用 use_container_width=True 確保按鈕超大)
-    btn = st.button(
-        "🚀 第二步：點我開始分析 + 生成文章", 
-        type="primary", 
+    # --- 3. 數據清單 ---
+    st.subheader("📝 本月優先進攻清單")
+    # 整理顯示欄位
+    display_df = dept_df[['Keyword', 'Search_Volume', 'AI_Potential', 'Strategy_Tag', 'Keyword_Type']]
+    # 讓「差異化」和「競品洞察」這類高價值字排前面
+    display_df = display_df.sort_values(['AI_Potential', 'Search_Volume'], ascending=False)
+    
+    st.dataframe(
+        display_df.style.background_gradient(subset=['AI_Potential'], cmap="Greens"),
         use_container_width=True
     )
-
-    if btn:
-        if "你的" in GEMINI_API_KEY or "你的" in SERPER_API_KEY:
-             st.error("⚠️ 請先在程式碼中填入正確的 API Key (Serper 和 Gemini)！")
-        else:
-            # A. 執行 Google 搜尋
-            with st.spinner(f"正在分析「{target_kw}」的 Google 排名..."):
-                results, status = get_google_results(target_kw)
-                
-                if "錯誤" in status:
-                    st.error(status)
-                else:
-                    st.success(f"✅ 搜尋完成！({status})")
-                    with st.expander("🔻 點擊查看目前的競爭對手 (前 3 名)", expanded=True):
-                        if not results:
-                            st.info("此關鍵字目前沒有顯著的競爭對手。")
-                        for i, res in enumerate(results):
-                            st.markdown(f"**{i+1}. [{res.get('title')}]({res.get('link')})**")
-                            st.caption(res.get('snippet'))
-
-            # B. 執行 AI 寫作
-            st.markdown("---")
-            st.subheader(f"✨ AI 為您生成的「{target_kw}」文章草稿")
-            
-            # 顯示不同的狀態文字
-            with st.spinner("🤖 AI 正在撰寫中 (若顯示系統忙碌，程式會自動重試)..."):
-                ai_article = generate_ai_article(target_kw, selected_dept)
-                
-                # 如果是忙碌警告，顯示黃色
-                if "⏳" in ai_article:
-                    st.warning(ai_article)
-                elif "❌" in ai_article:
-                    st.error(ai_article)
-                else:
-                    # 成功顯示
-                    st.markdown(ai_article)
-                    st.download_button(
-                        label="📥 下載這篇文章 (.txt)",
-                        data=ai_article,
-                        file_name=f"{selected_dept}_{target_kw}_文章草稿.txt",
-                        mime="text/plain"
-                    )
-
-    st.divider()
-    
-    # 行動清單表格
-    st.subheader("📝 優先撰寫建議")
-    clean_df = dept_df[['Keyword', 'Search_Volume', 'Competition_Level', 'Opportunity_Score']].sort_values('Opportunity_Score', ascending=False)
-    st.dataframe(clean_df, use_container_width=True)
