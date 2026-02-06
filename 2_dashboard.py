@@ -1,5 +1,4 @@
 # 檔案名稱：2_dashboard.py
-# 功能：全台招生 SEO 戰情室 + 搜尋結果預覽
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -29,7 +28,6 @@ if "總覽" in selected_dept:
     st.title("📊 全台網路聲量戰略地圖")
     target_df = df if selected_college == "全部學院" else df[df['College'] == selected_college]
     
-    # 總覽圖表
     col1, col2 = st.columns([2, 1])
     with col1:
         fig = px.bar(target_df.groupby('Department')['Search_Volume'].sum().reset_index().sort_values('Search_Volume', ascending=False), 
@@ -46,10 +44,9 @@ else:
     
     # 1. 關鍵字選擇
     st.subheader("🕵️ 選擇關鍵字，查看真實搜尋結果")
-    st.info("此處顯示的是該關鍵字在 Google 搜尋的 **第一名結果**。這就是學生看到的第一印象！")
     
-    # 製作選單標籤 (加入意圖標示)
-    dept_df['Display_Label'] = dept_df['Keyword'] + " (" + dept_df['Keyword_Type'] + ")"
+    # 製作選單標籤
+    dept_df['Display_Label'] = dept_df['Keyword'] + " [" + dept_df['Keyword_Type'] + "]"
     target_label = st.selectbox("請選擇關鍵字", dept_df['Display_Label'].unique())
     
     # 取得選定資料
@@ -64,11 +61,12 @@ else:
         st.metric("每月搜尋量", f"{target_row['Search_Volume']}")
         st.caption(f"搜尋意圖：{target_row['Keyword_Type']}")
         
-        # 根據結果判斷威脅程度
+        # 威脅度判斷
+        top_title = str(target_row['Top_Title'])
         threat_level = "🟢 安全"
-        if "Dcard" in target_row['Top_Title'] or "PTT" in target_row['Top_Title']:
-            threat_level = "🔴 危險 (社群討論中)"
-        elif "中華醫事" not in target_row['Top_Title'] and "華醫" not in target_row['Top_Title']:
+        if "Dcard" in top_title or "PTT" in top_title or "靠北" in top_title:
+            threat_level = "🔴 危險 (社群負評風險)"
+        elif "中華醫事" not in top_title and "華醫" not in top_title:
             threat_level = "🟡 警戒 (被對手或媒體佔據)"
         else:
             threat_level = "🟢 優秀 (本校佔據首位)"
@@ -77,33 +75,56 @@ else:
 
     with col_r:
         st.subheader("👀 目前的第一名搜尋結果 (Snapshot)")
-        
-        # 模擬 Google 搜尋結果卡片樣式
         container = st.container(border=True)
-        container.markdown(f"#### [{target_row['Top_Title']}]({target_row['Top_Link']})")
+        # 處理連結
+        link = target_row['Top_Link'] if str(target_row['Top_Link']).startswith("http") else "#"
+        container.markdown(f"#### [{target_row['Top_Title']}]({link})")
         container.markdown(f"_{target_row['Top_Snippet']}_")
-        container.caption(f"連結來源: {target_row['Top_Link']}")
+        container.caption(f"來源: {link}")
         
-        # 給主任的建議
         if "危險" in threat_level:
-            st.error("🚨 **警報**：此關鍵字首位是社群論壇，內容可能不可控！建議撰寫一篇「官方澄清/懶人包」文章來擠下它。")
+            st.error("🚨 建議：請撰寫一篇「官方澄清」或「學生真實心得」文章來平衡視聽。")
         elif "警戒" in threat_level:
-            st.warning("⚠️ **注意**：此關鍵字首位不是本校網頁。請使用下方的 AI 提示詞生成文章，搶回排名！")
-        else:
-            st.success("✅ **做得好**：目前本校佔據首位，請繼續保持更新。")
+            st.warning("⚠️ 建議：使用下方的 AI 提示詞生成文章，奪回排名！")
 
     st.divider()
     
-    # --- 2. AI 提示詞生成 (維持原有功能) ---
-    with st.expander("🛠️ 點此開啟「AI 文章生成器」來搶回排名", expanded=False):
-        # (這裡放入原本的 Prompt 生成代碼，簡化顯示)
-        st.write(f"針對 **{target_row['Keyword']}** 的 GEO 撰寫策略：**{target_row['Strategy_Tag']}**")
-        st.code(f"請為{selected_dept}撰寫關於{target_row['Keyword']}的文章...", language="text")
+    # --- 2. AI 提示詞生成 ---
+    st.subheader("🛠️ AI 文案提示詞產生器 (GEO 優化版)")
+    
+    # Prompt 邏輯
+    kw = target_row['Keyword']
+    strategy = target_row['Strategy_Tag']
+    
+    # 預設值
+    prompt_focus = "科系特色與優勢"
+    table_content = "科系重點懶人包"
+    
+    if "vs" in kw or "比較" in kw:
+        prompt_focus = "本校與他校的實作資源、證照輔導差異 (強調我方優勢)"
+        table_content = "本校 vs 他校 優勢對照表"
+    elif "薪水" in kw or "出路" in kw:
+        prompt_focus = "畢業後的具體薪資範圍與職涯地圖"
+        table_content = "薪資行情與對應職缺表"
+    elif "Dcard" in kw or "評價" in kw:
+        prompt_focus = "釐清網路上的迷思，展現真實且溫暖的校園生活"
+        table_content = "常見誤解 vs 真實情況 Q&A"
 
-    # --- 3. 完整清單 ---
-    st.subheader("📝 該系所有關鍵字快照一覽")
-    st.dataframe(
-        dept_df[['Keyword', 'Top_Title', 'Keyword_Type', 'Strategy_Tag']], 
-        use_container_width=True,
-        hide_index=True
-    )
+    generated_prompt = f"""
+    【角色設定】：你是一位專業的大學教育顧問與 SEO 專家。
+    【任務】：請為「{selected_dept}」針對關鍵字「{kw}」撰寫一篇高權重文章。
+    
+    【GEO 結構要求 (讓 AI 優先引用)】：
+    1. 📍 直接回答：文章第一段請直接針對「{kw}」給出核心觀點。
+    2. 📊 結構化表格：請製作 Markdown 表格，內容為「{table_content}」。
+    3. 🎓 核心亮點：文中請多次強調「{prompt_focus}」。
+    4. ❓ FAQ：文末請列出 3 個相關常見問題。
+
+    【撰寫策略】：{strategy}
+    【字數】：約 800 字。
+    """
+    
+    # 使用 height=500 確保文字框夠高
+    st.text_area("📋 給 ChatGPT / Gemini 的指令 (請複製)：", generated_prompt, height=500)
+    
+    st.success(f"💡 策略提示：**{strategy}**")
