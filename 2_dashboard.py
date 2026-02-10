@@ -635,7 +635,7 @@ def looks_like_question(q: str):
 
 def decision_questions_top10(dept_df: pd.DataFrame):
     """
-    優先用 Keyword_Source=autocomplete，因為最像真人輸入；再補其他來源
+    優先用 Keyword_Source=autocomplete，輸入；再補其他來源
     """
     qs = []
 
@@ -815,7 +815,7 @@ min_opp_max = int(max(1, df["Opportunity_Score"].max()))
 min_opp = st.sidebar.slider("Opportunity_Score 最低門檻", 0, min_opp_max, 0, 10)
 
 st.sidebar.divider()
-st.sidebar.caption("✅ 想看最像真人輸入：來源選 Autocomplete。")
+st.sidebar.caption("✅ 輸入：來源選 Autocomplete。")
 
 if funnel_df is None:
     st.sidebar.caption("（可選）放入 funnel_data.csv 可顯示漏斗轉換。")
@@ -996,7 +996,7 @@ def onepager_page(scope_df: pd.DataFrame, dept_name: str):
 
     left, right = st.columns([1.2, 1])
     with left:
-        st.markdown("**Top10 原句問題（最像真人）**")
+        st.markdown("**Top10 原句問題**")
         if top10_q:
             st.dataframe(pd.DataFrame(top10_q), use_container_width=True, height=320)
         else:
